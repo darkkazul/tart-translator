@@ -51,4 +51,39 @@ describe("classifyTranscript", () => {
     expect(focus.procedure.some((segment) => /click export/i.test(segment.text))).toBe(true);
     expect(focus.tangents.some((segment) => /by the way/i.test(segment.text))).toBe(true);
   });
+
+  it("classifies the expanded conversational action starters as procedures", () => {
+    const focus = classifyTranscript("Navigate to the settings page. Upload the backup file.");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual([
+      "Navigate to the settings page.",
+      "Upload the backup file."
+    ]);
+    expect(focus.tangents).toEqual([]);
+  });
+
+  it("splits connector-free action chains into separate procedure segments", () => {
+    const focus = classifyTranscript("open settings save the file run the script");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual([
+      "open settings",
+      "save the file",
+      "run the script"
+    ]);
+  });
+
+  it("splits before a new action but keeps an action word used as a button label", () => {
+    const focus = classifyTranscript("open settings click save");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual(["open settings", "click save"]);
+  });
+
+  it("does not split an action word used as a noun modifier", () => {
+    const focus = classifyTranscript("check the export settings save the file");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual([
+      "check the export settings",
+      "save the file"
+    ]);
+  });
 });

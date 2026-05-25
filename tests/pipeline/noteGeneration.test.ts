@@ -133,6 +133,18 @@ describe("createDeterministicDraft", () => {
     expect(draft.steps).toEqual(["Open the dashboard.", "Go to shares.", "Click export."]);
   });
 
+  it("turns a connector-free run-on into ordered process steps end to end", () => {
+    const draft = createDeterministicDraft(classifyTranscript("open settings save the file run the script"));
+
+    expect(draft.steps).toEqual(["Open settings.", "Save the file.", "Run the script."]);
+  });
+
+  it("keeps an action word used as a button label as a single step", () => {
+    const draft = createDeterministicDraft(classifyTranscript("open settings click save"));
+
+    expect(draft.steps).toEqual(["Open settings.", "Click save."]);
+  });
+
   it("does not turn vague planning chatter into a raw procedure step", () => {
     const draft = createDeterministicDraft({
       procedure: [
