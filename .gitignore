@@ -1,0 +1,9 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+docs/superpowers/
+.env
+.env.local
+.DS_Store
+npm-debug.log*

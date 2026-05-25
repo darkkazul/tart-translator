@@ -1,0 +1,10 @@
+services:
+  tart-translator:
+    build: .
+    image: tart-translator:local
+    container_name: tart-translator
+    env_file:
+      - .env.docker.example
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
