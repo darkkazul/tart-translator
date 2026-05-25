@@ -116,6 +116,49 @@ describe("App suggestions", () => {
 
     await screen.findByRole("heading", { name: "Suggestions" });
     expect(screen.getByText("Confirm the changes.")).toBeInTheDocument();
+
+    // Re-agreeing after an undo must promote the suggestion again.
+    fireEvent.click(screen.getByRole("button", { name: "Agree" }));
+    await waitFor(() => {
+      const steps = screen.getAllByRole("listitem").map((item) => item.textContent);
+      expect(steps).toContain("Confirm the changes.");
+    });
+  });
+
+  it("removes the promoted step on undo even when its text duplicates an existing step", async () => {
+    const duplicateText: ProcessTranscriptResponse = {
+      ...responseWithSuggestion,
+      draft: {
+        ...responseWithSuggestion.draft,
+        steps: ["Click Save.", "Open settings."],
+        suggestions: [
+          {
+            id: "ollama-extra-step-1",
+            text: "Click Save.",
+            reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
+            suggestedAfterStepIndex: 1
+          }
+        ]
+      }
+    };
+    mocks.streamProcessTranscriptRequest.mockResolvedValue(duplicateText);
+
+    const { container } = render(<App />);
+
+    fireEvent.change(screen.getByLabelText("Raw transcript"), { target: { value: "anything" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate notes" }));
+
+    await screen.findByRole("button", { name: "Agree" });
+    fireEvent.click(screen.getByRole("button", { name: "Agree" }));
+
+    await screen.findByRole("button", { name: "Undo" });
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+
+    await screen.findByRole("heading", { name: "Suggestions" });
+    const stepItems = within(container.querySelector("ol") as HTMLElement)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(stepItems).toEqual(["Click Save.", "Open settings."]);
   });
 
   it("shows a clear empty state when no concrete steps are detected", async () => {

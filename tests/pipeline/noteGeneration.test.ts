@@ -145,6 +145,12 @@ describe("createDeterministicDraft", () => {
     expect(draft.steps).toEqual(["Open settings.", "Click save."]);
   });
 
+  it("keeps a leading step whose action verb the offline parser already supports", () => {
+    const draft = createDeterministicDraft(classifyTranscript("Type the password and then click Save."));
+
+    expect(draft.steps).toEqual(["Type the password.", "Click Save."]);
+  });
+
   it("does not turn vague planning chatter into a raw procedure step", () => {
     const draft = createDeterministicDraft({
       procedure: [
@@ -574,6 +580,40 @@ describe("OllamaNoteProvider", () => {
         suggestedAfterStepIndex: 0
       }
     ]);
+  });
+
+  it("keeps Ollama's rewrite of matched steps and parks only the unmatched extra", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to save settings",
+          overview: "Save settings.",
+          prerequisites: [],
+          steps: [
+            "Open the settings page.",
+            "Click the Save button.",
+            "Restart the settings service."
+          ],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        { id: "1", text: "First open settings.", bucket: "procedure", confidence: 0.8, reason: "test" },
+        { id: "2", text: "Then click Save.", bucket: "procedure", confidence: 0.8, reason: "test" }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.steps).toEqual(["Open the settings page.", "Click the Save button."]);
+    expect(draft.suggestions.map((suggestion) => suggestion.text)).toEqual(["Restart the settings service."]);
+    expect(draft.generationIssue).toBe("Ollama suggested extra steps that need review.");
   });
 
   it("filters Ollama meta-suggestions that are about writing the notes instead of doing the procedure", async () => {

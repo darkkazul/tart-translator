@@ -1,7 +1,6 @@
+import { ACTION_STARTER_SOURCE } from "../shared/actions";
 import type { FocusReview, TranscriptSegment } from "../shared/types";
 
-const ACTION_STARTER_SOURCE =
-  "open|go to|head over to|head to|navigate to|visit|click|hit|press|tap|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|upload|download";
 const SEQUENCE_MARKERS = "first|second|third|next|then|after that|before";
 // One source of truth: every concrete action starter is also procedural language,
 // so newly supported verbs (navigate to, upload, ...) classify as procedures too.
@@ -9,8 +8,11 @@ const PROCEDURE_MARKERS = new RegExp(`\\b(?:${SEQUENCE_MARKERS}|${ACTION_STARTER
 const CONCRETE_ACTION_MARKERS = new RegExp(`\\b(?:${ACTION_STARTER_SOURCE})\\b`, "i");
 const PLACEHOLDER_STEP_MARKERS =
   /\b(?:point\s+)?step\s+(?:one|two|three|four|five|\d+)\b|\bgo from there\b|\bcontinue with step\b/i;
-const TANGENT_MARKERS =
-  /\b(reminds me|by the way|side note|this is unrelated|another thing|historically|old|random)\b/i;
+// Strong discourse markers signal a tangent on their own. Weak markers are bare
+// content words ("delete the old config", "generate a random token") that only
+// indicate a tangent when the clause has no concrete action of its own.
+const STRONG_TANGENT_MARKERS = /\b(reminds me|by the way|side note|this is unrelated|another thing)\b/i;
+const WEAK_TANGENT_MARKERS = /\b(historically|old|random)\b/i;
 const NOISE_MARKERS = /^(anyway|so yeah|whatever|never mind|ignore that)\.?$/i;
 
 // Discourse shifts that start a new clause. Narrower than TANGENT_MARKERS on
@@ -91,7 +93,7 @@ function makeSegment(index: number, text: string): TranscriptSegment {
     };
   }
 
-  if (TANGENT_MARKERS.test(text)) {
+  if (STRONG_TANGENT_MARKERS.test(text) || (WEAK_TANGENT_MARKERS.test(text) && !CONCRETE_ACTION_MARKERS.test(text))) {
     return {
       id: `segment-${index}`,
       text,

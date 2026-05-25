@@ -1,3 +1,4 @@
+import { ACTION_STARTER_SOURCE } from "../shared/actions";
 import { DEFAULT_FILLER_TERMS } from "../shared/defaults";
 import type { DraftSuggestion, FocusReview, HowToDraft } from "../shared/types";
 import { z } from "zod";
@@ -17,8 +18,7 @@ const draftSchema = z.object({
   troubleshooting: z.array(z.string())
 });
 
-const ACTION_STARTERS =
-  "open|go to|head over to|head to|navigate to|visit|click|hit|press|tap|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|add|remove|enter|type|upload|download|wait";
+const ACTION_STARTERS = ACTION_STARTER_SOURCE;
 const ACTION_ONLY_WORDS = new Set([
   "add",
   "check",
@@ -257,11 +257,15 @@ function splitGroundedStepsAndSuggestions(
   fallbackSteps: string[],
   sourceText: string
 ): { steps: string[]; suggestions: DraftSuggestion[] } {
+  const steps: string[] = [];
   const suggestions: DraftSuggestion[] = [];
   let fallbackIndex = 0;
 
   for (const modelStep of modelSteps) {
     if (fallbackIndex < fallbackSteps.length && isSimilarStep(modelStep, fallbackSteps[fallbackIndex])) {
+      // Keep Ollama's clearer rewrite of a step the parser also found, not the
+      // raw parser text. Only genuinely extra steps become review suggestions.
+      steps.push(modelStep);
       fallbackIndex += 1;
       continue;
     }
@@ -271,12 +275,12 @@ function splitGroundedStepsAndSuggestions(
         id: `ollama-extra-step-${suggestions.length + 1}`,
         text: modelStep,
         reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
-        suggestedAfterStepIndex: fallbackIndex > 0 ? fallbackIndex - 1 : undefined
+        suggestedAfterStepIndex: steps.length > 0 ? steps.length - 1 : undefined
       });
     }
   }
 
-  return { steps: fallbackSteps, suggestions };
+  return { steps, suggestions };
 }
 
 function parseOllamaDraftResponse(response: string) {

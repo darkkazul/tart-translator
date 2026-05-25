@@ -12,6 +12,47 @@ type ProgressState = {
 type PromotedSuggestion = {
   suggestion: DraftSuggestion;
 };
+type DisplayStep = { text: string; key: string };
+
+// Build the displayed step list from the immutable generated steps plus any
+// agreed suggestions, keyed by identity. suggestedAfterStepIndex refers to a
+// position in the base steps, so the merge is stable across agree/undo cycles
+// and never removes the wrong step when texts collide.
+function mergeStepsWithSuggestions(baseSteps: string[], promoted: PromotedSuggestion[]): DisplayStep[] {
+  const afterBaseIndex = new Map<number, DraftSuggestion[]>();
+  const atEnd: DraftSuggestion[] = [];
+
+  const ordered = [...promoted]
+    .map((entry) => entry.suggestion)
+    .sort((left, right) => {
+      const leftIndex = left.suggestedAfterStepIndex ?? Number.MAX_SAFE_INTEGER;
+      const rightIndex = right.suggestedAfterStepIndex ?? Number.MAX_SAFE_INTEGER;
+      return leftIndex - rightIndex || left.id.localeCompare(right.id);
+    });
+
+  for (const suggestion of ordered) {
+    const after = suggestion.suggestedAfterStepIndex;
+    if (typeof after === "number" && after >= 0 && after < baseSteps.length) {
+      const list = afterBaseIndex.get(after) ?? [];
+      list.push(suggestion);
+      afterBaseIndex.set(after, list);
+    } else {
+      atEnd.push(suggestion);
+    }
+  }
+
+  const merged: DisplayStep[] = [];
+  baseSteps.forEach((text, index) => {
+    merged.push({ text, key: `step-${index}` });
+    for (const suggestion of afterBaseIndex.get(index) ?? []) {
+      merged.push({ text: suggestion.text, key: suggestion.id });
+    }
+  });
+  for (const suggestion of atEnd) {
+    merged.push({ text: suggestion.text, key: suggestion.id });
+  }
+  return merged;
+}
 
 export function App() {
   const [tab, setTab] = useState<Tab>("transcript");
@@ -29,6 +70,13 @@ export function App() {
   const parsedFillerTerms = useMemo(
     () => fillerTerms.split(",").map((term) => term.trim()).filter(Boolean),
     [fillerTerms]
+  );
+
+  // The generated steps stay immutable; agreed suggestions are merged in for
+  // display by identity, so undo never has to guess which step to remove.
+  const displaySteps = useMemo(
+    () => mergeStepsWithSuggestions(result?.draft.steps ?? [], promotedSuggestions),
+    [result, promotedSuggestions]
   );
 
   useEffect(() => {
@@ -92,26 +140,17 @@ export function App() {
   }
 
   function agreeWithSuggestion(suggestion: DraftSuggestion) {
-    setResult((current) => {
-      if (!current) return current;
-
-      const steps = [...current.draft.steps];
-      const insertIndex =
-        typeof suggestion.suggestedAfterStepIndex === "number"
-          ? Math.min(Math.max(suggestion.suggestedAfterStepIndex + 1, 0), steps.length)
-          : steps.length;
-
-      steps.splice(insertIndex, 0, suggestion.text);
-
-      return {
-        ...current,
-        draft: {
-          ...current.draft,
-          steps,
-          suggestions: current.draft.suggestions.filter((candidate) => candidate.id !== suggestion.id)
-        }
-      };
-    });
+    setResult((current) =>
+      current
+        ? {
+            ...current,
+            draft: {
+              ...current.draft,
+              suggestions: current.draft.suggestions.filter((candidate) => candidate.id !== suggestion.id)
+            }
+          }
+        : current
+    );
     setPromotedSuggestions((current) => [...current, { suggestion }]);
   }
 
@@ -124,18 +163,8 @@ export function App() {
         const rightIndex = right.suggestedAfterStepIndex ?? Number.MAX_SAFE_INTEGER;
         return leftIndex - rightIndex || left.id.localeCompare(right.id);
       });
-      const stepIndex = current.draft.steps.findIndex((step) => step === suggestion.text);
 
-      return {
-        ...current,
-        draft: {
-          ...current.draft,
-          steps: stepIndex >= 0
-            ? current.draft.steps.filter((_, index) => index !== stepIndex)
-            : current.draft.steps,
-          suggestions: restoredSuggestions
-        }
-      };
+      return { ...current, draft: { ...current.draft, suggestions: restoredSuggestions } };
     });
     setPromotedSuggestions((current) => current.filter((item) => item.suggestion.id !== suggestion.id));
   }
@@ -217,8 +246,8 @@ export function App() {
                   </>
                 ) : null}
                 <h3>Steps</h3>
-                {result.draft.steps.length > 0 ? (
-                  <ol>{result.draft.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                {displaySteps.length > 0 ? (
+                  <ol>{displaySteps.map((step) => <li key={step.key}>{step.text}</li>)}</ol>
                 ) : (
                   <p className="empty-state">No concrete procedure steps were detected in this transcript.</p>
                 )}
