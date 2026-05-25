@@ -230,7 +230,16 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
     const response = await fetch(this.endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: process.env.OLLAMA_MODEL ?? "llama3.2", prompt, stream: false, format: "json" })
+      body: JSON.stringify({
+        model: process.env.OLLAMA_MODEL ?? "llama3.2",
+        prompt,
+        stream: false,
+        format: "json",
+        options: {
+          temperature: 0,
+          seed: 42
+        }
+      })
     });
 
     if (!response.ok) {

@@ -116,7 +116,7 @@ describe("OllamaNoteProvider", () => {
     expect(draft.steps).toEqual(["Open the settings page.", "Click the blue Save button and wait for it to finish."]);
   });
 
-  it("requests Ollama JSON mode", async () => {
+  it("requests Ollama JSON mode with deterministic decoding", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -134,7 +134,13 @@ describe("OllamaNoteProvider", () => {
 
     await new OllamaNoteProvider().generate(messyFocus);
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ format: "json" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      format: "json",
+      options: {
+        temperature: 0,
+        seed: 42
+      }
+    });
   });
 
   it("accepts Ollama JSON wrapped in prose with None array fields", async () => {
