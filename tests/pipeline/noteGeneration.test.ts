@@ -145,6 +145,12 @@ describe("createDeterministicDraft", () => {
     expect(draft.steps).toEqual(["Open settings.", "Click save."]);
   });
 
+  it("keeps a leading step whose action verb the offline parser already supports", () => {
+    const draft = createDeterministicDraft(classifyTranscript("Type the password and then click Save."));
+
+    expect(draft.steps).toEqual(["Type the password.", "Click Save."]);
+  });
+
   it("does not turn vague planning chatter into a raw procedure step", () => {
     const draft = createDeterministicDraft({
       procedure: [

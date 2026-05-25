@@ -1,7 +1,6 @@
+import { ACTION_STARTER_SOURCE } from "../shared/actions";
 import type { FocusReview, TranscriptSegment } from "../shared/types";
 
-const ACTION_STARTER_SOURCE =
-  "open|go to|head over to|head to|navigate to|visit|click|hit|press|tap|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|upload|download";
 const SEQUENCE_MARKERS = "first|second|third|next|then|after that|before";
 // One source of truth: every concrete action starter is also procedural language,
 // so newly supported verbs (navigate to, upload, ...) classify as procedures too.

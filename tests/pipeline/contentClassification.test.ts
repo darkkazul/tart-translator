@@ -86,4 +86,16 @@ describe("classifyTranscript", () => {
       "save the file"
     ]);
   });
+
+  it("classifies the action verbs the note generator supports (type, enter, add, remove, wait)", () => {
+    const focus = classifyTranscript("Type the password. Enter your email. Add a user. Remove the user. Wait for sync.");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual([
+      "Type the password.",
+      "Enter your email.",
+      "Add a user.",
+      "Remove the user.",
+      "Wait for sync."
+    ]);
+  });
 });

@@ -1,3 +1,4 @@
+import { ACTION_STARTER_SOURCE } from "../shared/actions";
 import { DEFAULT_FILLER_TERMS } from "../shared/defaults";
 import type { DraftSuggestion, FocusReview, HowToDraft } from "../shared/types";
 import { z } from "zod";
@@ -17,8 +18,7 @@ const draftSchema = z.object({
   troubleshooting: z.array(z.string())
 });
 
-const ACTION_STARTERS =
-  "open|go to|head over to|head to|navigate to|visit|click|hit|press|tap|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|add|remove|enter|type|upload|download|wait";
+const ACTION_STARTERS = ACTION_STARTER_SOURCE;
 const ACTION_ONLY_WORDS = new Set([
   "add",
   "check",
