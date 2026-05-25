@@ -92,6 +92,43 @@ describe("createDeterministicDraft", () => {
       "Save the file somewhere safe."
     ]);
   });
+
+  it("rewrites conversational action verbs into process steps", () => {
+    const draft = createDeterministicDraft({
+      procedure: [
+        {
+          id: "1",
+          text: "The thing you do is head over to settings and hit Save.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.steps).toEqual(["Go to settings.", "Click Save."]);
+  });
+
+  it("does not turn vague planning chatter into a raw procedure step", () => {
+    const draft = createDeterministicDraft({
+      procedure: [
+        {
+          id: "1",
+          text: "I am just talking to figure out if this thing is working remotely and then we might need to do point step one and then continue with step two.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.steps).toEqual([]);
+    expect(draft.overview).toBe("No clear procedure steps were detected. Review the transcript and tangents.");
+  });
 });
 
 describe("OllamaNoteProvider", () => {
@@ -134,13 +171,186 @@ describe("OllamaNoteProvider", () => {
 
     await new OllamaNoteProvider().generate(messyFocus);
 
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+
+    expect(requestBody).toMatchObject({
       format: "json",
       options: {
         temperature: 0,
         seed: 42
       }
     });
+    expect(requestBody.prompt).toContain("A valid step starts with a concrete action the user should perform.");
+    expect(requestBody.prompt).toContain("If the transcript does not contain a real procedure, return an empty steps array.");
+    expect(requestBody.prompt).toContain("Do not output steps like");
+    expect(requestBody.prompt).toContain("Identify the main objective");
+    expect(requestBody.prompt).toContain("Return only valid JSON.");
+  });
+
+  it("accepts empty Ollama steps when no grounded procedure actions exist", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to complete the process",
+          overview: "No clear procedure steps were detected.",
+          prerequisites: [],
+          steps: [],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "I am just talking through the idea and we might do step one later.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.steps).toEqual([]);
+    expect(draft.suggestions).toEqual([]);
+  });
+
+  it("fills safe metadata when Ollama returns empty metadata for no procedure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "",
+          overview: "",
+          prerequisites: [],
+          steps: [],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "I am just talking through the idea and we might do step one later.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.title).toBe("How to complete the process");
+    expect(draft.overview).toBe("No clear procedure steps were detected. Review the transcript and tangents.");
+    expect(draft.steps).toEqual([]);
+    expect(draft.generationIssue).toBeUndefined();
+  });
+
+  it("accepts an empty Ollama object when no grounded procedure actions exist", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: "{}" })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "I am just talking through the idea and we might do step one later.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.title).toBe("How to complete the process");
+    expect(draft.overview).toBe("No clear procedure steps were detected. Review the transcript and tangents.");
+    expect(draft.steps).toEqual([]);
+    expect(draft.suggestions).toEqual([]);
+  });
+
+  it("accepts grounded Ollama steps when the offline parser misses conversational actions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to save settings",
+          overview: "Save settings from the settings page.",
+          prerequisites: [],
+          steps: ["Open settings.", "Click Save."],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "The thing you do is head over to settings and hit Save.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.steps).toEqual(["Open settings.", "Click Save."]);
+    expect(draft.suggestions).toEqual([]);
+    expect(draft.generationIssue).toBeUndefined();
+  });
+
+  it("rejects Ollama steps copied from prompt examples instead of grounded transcript details", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to save settings",
+          overview: "Save settings from the settings page.",
+          prerequisites: [],
+          steps: ["Open the Unraid dashboard."],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "The thing you do is head over to settings and hit Save.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("deterministic");
+    expect(draft.steps).toEqual(["Go to settings.", "Click Save."]);
+    expect(draft.generationIssue).toBe("Ollama collapsed multiple parser steps into fewer steps.");
   });
 
   it("accepts Ollama JSON wrapped in prose with None array fields", async () => {
@@ -291,7 +501,7 @@ describe("OllamaNoteProvider", () => {
     ]);
   });
 
-  it("falls back when Ollama adds unsupported extra steps", async () => {
+  it("parks Ollama-added extra steps as review suggestions", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -301,7 +511,7 @@ describe("OllamaNoteProvider", () => {
           prerequisites: [],
           steps: [
             "Open settings.",
-            "Select your preferred language or region.",
+            "Wait for settings to finish saving.",
             "Click Save."
           ],
           warnings: [],
@@ -319,8 +529,56 @@ describe("OllamaNoteProvider", () => {
       noise: []
     });
 
-    expect(draft.generationMode).toBe("deterministic");
-    expect(draft.generationIssue).toBe("Ollama added extra steps not found by the parser.");
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.generationIssue).toBe("Ollama suggested extra steps that need review.");
     expect(draft.steps).toEqual(["Open settings.", "Click Save."]);
+    expect(draft.suggestions).toEqual([
+      {
+        id: "ollama-extra-step-1",
+        text: "Wait for settings to finish saving.",
+        reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
+        suggestedAfterStepIndex: 0
+      }
+    ]);
+  });
+
+  it("filters Ollama meta-suggestions that are about writing the notes instead of doing the procedure", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "Concise How-To Notes",
+          overview: "Break down long spoken instructions into separate steps.",
+          prerequisites: [],
+          steps: [
+            "Identify the main task or objective of the procedure.",
+            "Split the instruction into individual steps based on key words like first, then, next, and after that.",
+            "Organize the steps in a logical order.",
+            "Review and refine the steps to ensure clarity and completeness."
+          ],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        {
+          id: "1",
+          text: "I am just talking to try to figure out if this thing is working remotely and then we might need to do point step one and then continue with step two.",
+          bucket: "procedure",
+          confidence: 0.78,
+          reason: "test"
+        }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("deterministic");
+    expect(draft.generationIssue).toBe("Ollama returned steps without grounded procedure actions.");
+    expect(draft.steps).toEqual([]);
+    expect(draft.suggestions).toEqual([]);
   });
 });

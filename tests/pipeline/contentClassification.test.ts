@@ -21,4 +21,13 @@ describe("classifyTranscript", () => {
     expect(focus.noise[0].text).toBe("Anyway.");
     expect(focus.procedure[0].text).toBe("Then restart the worker.");
   });
+
+  it("parks placeholder step chatter without concrete actions", () => {
+    const focus = classifyTranscript(
+      "I'm just kind of talking to try to figure out if this thing is working remotely and then we might need to do point step one and then continue with step two."
+    );
+
+    expect(focus.procedure).toEqual([]);
+    expect(focus.tangents[0].reason).toBe("Mentions placeholder steps without concrete actions.");
+  });
 });

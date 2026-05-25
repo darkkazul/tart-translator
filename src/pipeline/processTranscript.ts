@@ -36,7 +36,9 @@ export async function processTranscript(
 
   onProgress?.("Finalizing notes", 94);
   const warnings: string[] = [];
-  if (draft.generationMode === "deterministic" && draft.generationIssue) {
+  if (draft.generationMode === "ollama" && draft.generationIssue) {
+    warnings.push(draft.generationIssue);
+  } else if (draft.generationMode === "deterministic" && draft.generationIssue && draft.steps.length === 0) {
     warnings.push(`Ollama was available, but the offline parser was used: ${draft.generationIssue}`);
   } else if (draft.generationMode === "deterministic" && unavailableProviders.includes("ollama")) {
     warnings.push("Ollama was unavailable, so the offline parser was used.");

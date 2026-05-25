@@ -1,5 +1,5 @@
 import { DEFAULT_FILLER_TERMS } from "../shared/defaults";
-import type { FocusReview, HowToDraft } from "../shared/types";
+import type { DraftSuggestion, FocusReview, HowToDraft } from "../shared/types";
 import { z } from "zod";
 
 export interface NoteGenerationProvider {
@@ -12,13 +12,46 @@ const draftSchema = z.object({
   title: z.string().trim().min(1),
   overview: z.string().trim().min(1),
   prerequisites: z.array(z.string()),
-  steps: z.array(z.string().trim().min(1).regex(/^[A-Z].*[.!?]$/)).min(1),
+  steps: z.array(z.string().trim().min(1).regex(/^[A-Z].*[.!?]$/)),
   warnings: z.array(z.string()),
   troubleshooting: z.array(z.string())
 });
 
 const ACTION_STARTERS =
-  "open|go to|click|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|add|remove|enter|type|upload|download";
+  "open|go to|head over to|head to|navigate to|visit|click|hit|press|tap|select|choose|save|copy|paste|run|restart|check|verify|make sure|set|create|delete|update|export|import|add|remove|enter|type|upload|download|wait";
+const ACTION_ONLY_WORDS = new Set([
+  "add",
+  "check",
+  "choose",
+  "click",
+  "connect",
+  "copy",
+  "create",
+  "delete",
+  "download",
+  "enter",
+  "export",
+  "head",
+  "hit",
+  "import",
+  "navigate",
+  "open",
+  "paste",
+  "press",
+  "remove",
+  "restart",
+  "run",
+  "select",
+  "set",
+  "store",
+  "tap",
+  "type",
+  "update",
+  "upload",
+  "verify",
+  "visit",
+  "wait"
+]);
 
 function stripSpokenLeadIn(text: string) {
   let stripped = text.trim();
@@ -28,6 +61,9 @@ function stripSpokenLeadIn(text: string) {
       .replace(/^(?:okay|ok|alright|so|um|uh|ah|basically|actually)[,\s]+/i, "")
       .replace(/^(?:what\s+)?(?:i|we)\s+need\s+you\s+to\s+do\s+is\s+/i, "")
       .replace(/^(?:what\s+)?you\s+(?:need|want|wanna)\s+to\s+do\s+is\s+/i, "")
+      .replace(/^you(?:'re| are)?\s+(?:gonna|going to|want to|wanna)\s+/i, "")
+      .replace(/^(?:want|wanna)\s+to\s+/i, "")
+      .replace(/^the\s+thing\s+you\s+do\s+is\s+/i, "")
       .replace(/^the\s+(?:process|thing)\s+is\s+/i, "")
       .trim();
   }
@@ -45,7 +81,7 @@ function splitProcedureActions(text: string) {
     .replace(/\b(?:and\s+then|and\s+after\s+that|and\s+next|after\s+that|next|then)\b/gi, ". ")
     .replace(new RegExp(`\\s+and\\s+(?=(?:${ACTION_STARTERS})\\b)`, "gi"), ". ")
     .split(/\.\s+/)
-    .map((part) => part.replace(/^\s*(?:first|second|third|fourth|finally),?\s+/i, "").trim())
+    .map((part) => stripSpokenLeadIn(part.replace(/^\s*(?:first|second|third|fourth|finally|next|then|after that),?\s+/i, "")).trim())
     .filter((part) => new RegExp(`^(?:${ACTION_STARTERS})\\b`, "i").test(part));
 }
 
@@ -69,6 +105,12 @@ export function rewriteInstructionSentence(sentence: string) {
 
   rewritten = rewritten
     .replace(/\bgo ahead and\s+/gi, "")
+    .replace(/\bhead over to\b/gi, "go to")
+    .replace(/\bhead to\b/gi, "go to")
+    .replace(/\bnavigate to\b/gi, "go to")
+    .replace(/\bhit\b/gi, "click")
+    .replace(/\bpress\b/gi, "click")
+    .replace(/\btap\b/gi, "click")
     .replace(/\bopen up\b/gi, "open")
     .replace(/\bclick on\b/gi, "click")
     .replace(/\bit's\b/gi, "it is")
@@ -90,7 +132,7 @@ export function rewriteInstructionSentence(sentence: string) {
 export function createDeterministicDraft(focus: FocusReview): HowToDraft {
   const steps = focus.procedure.flatMap((segment) => {
     const actions = splitProcedureActions(segment.text);
-    return (actions.length > 0 ? actions : [segment.text]).map(rewriteInstructionSentence);
+    return actions.map(rewriteInstructionSentence);
   });
 
   return {
@@ -101,6 +143,7 @@ export function createDeterministicDraft(focus: FocusReview): HowToDraft {
         : "No clear procedure steps were detected. Review the transcript and tangents.",
     prerequisites: [],
     steps,
+    suggestions: [],
     warnings: focus.tangents.length > 0 ? ["Review parked tangents for extra context before sharing."] : [],
     troubleshooting: [],
     generationMode: "deterministic"
@@ -115,9 +158,17 @@ function isCollapsedTranscriptStep(step: string) {
   );
 }
 
-function modelDraftIssue(draft: z.infer<typeof draftSchema>, fallback: HowToDraft) {
+function modelDraftIssue(draft: z.infer<typeof draftSchema>, fallback: HowToDraft, sourceText: string) {
+  if (
+    fallback.steps.length === 0 &&
+    draft.steps.length > 0 &&
+    !allModelStepsAreGrounded(draft.steps, sourceText)
+  ) {
+    return "Ollama returned steps without grounded procedure actions.";
+  }
+
   if (fallback.steps.length > 0 && draft.steps.length > fallback.steps.length) {
-    return "Ollama added extra steps not found by the parser.";
+    return null;
   }
 
   const modelCollapsedActions = fallback.steps.length > 1 && draft.steps.length < fallback.steps.length;
@@ -128,6 +179,103 @@ function modelDraftIssue(draft: z.infer<typeof draftSchema>, fallback: HowToDraf
   }
 
   return null;
+}
+
+function normalizeForComparison(step: string) {
+  return step
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(the|a|an|your|on|to|up)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSimilarStep(modelStep: string, fallbackStep: string) {
+  const model = normalizeForComparison(modelStep);
+  const fallback = normalizeForComparison(fallbackStep);
+  return model === fallback || model.includes(fallback) || fallback.includes(model);
+}
+
+function importantWords(text: string) {
+  const stopWords = new Set([
+    "the",
+    "and",
+    "then",
+    "that",
+    "this",
+    "with",
+    "into",
+    "from",
+    "your",
+    "you",
+    "for",
+    "after",
+    "before",
+    "step",
+    "steps"
+  ]);
+
+  return new Set(
+    text
+      .toLowerCase()
+      .match(/[a-z0-9]+/g)
+      ?.filter((word) => word.length > 2 && !stopWords.has(word)) ?? []
+  );
+}
+
+function isMetaNoteSuggestion(step: string) {
+  return [
+    /\bidentify\b.*\b(?:task|objective|procedure|process)\b/i,
+    /\b(?:split|break down)\b.*\b(?:instruction|instructions|task|procedure|process)\b/i,
+    /\borganize\b.*\bsteps?\b/i,
+    /\breview and refine\b/i,
+    /\bensure\b.*\b(?:clarity|completeness)\b/i,
+    /\bindividual steps\b/i,
+    /\blogical order\b/i
+  ].some((pattern) => pattern.test(step));
+}
+
+function contentWords(text: string) {
+  return new Set([...importantWords(text)].filter((word) => !ACTION_ONLY_WORDS.has(word)));
+}
+
+function isUsefulProcedureSuggestion(step: string, sourceText: string) {
+  if (isMetaNoteSuggestion(step)) return false;
+  if (!new RegExp(`^(?:${ACTION_STARTERS})\\b`, "i").test(step)) return false;
+
+  const sourceContentWords = contentWords(sourceText);
+  return [...contentWords(step)].some((word) => sourceContentWords.has(word));
+}
+
+function allModelStepsAreGrounded(modelSteps: string[], sourceText: string) {
+  return modelSteps.length > 0 && modelSteps.every((step) => isUsefulProcedureSuggestion(step, sourceText));
+}
+
+function splitGroundedStepsAndSuggestions(
+  modelSteps: string[],
+  fallbackSteps: string[],
+  sourceText: string
+): { steps: string[]; suggestions: DraftSuggestion[] } {
+  const suggestions: DraftSuggestion[] = [];
+  let fallbackIndex = 0;
+
+  for (const modelStep of modelSteps) {
+    if (fallbackIndex < fallbackSteps.length && isSimilarStep(modelStep, fallbackSteps[fallbackIndex])) {
+      fallbackIndex += 1;
+      continue;
+    }
+
+    if (isUsefulProcedureSuggestion(modelStep, sourceText)) {
+      suggestions.push({
+        id: `ollama-extra-step-${suggestions.length + 1}`,
+        text: modelStep,
+        reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
+        suggestedAfterStepIndex: fallbackIndex > 0 ? fallbackIndex - 1 : undefined
+      });
+    }
+  }
+
+  return { steps: fallbackSteps, suggestions };
 }
 
 function parseOllamaDraftResponse(response: string) {
@@ -148,6 +296,13 @@ function normalizeModelDraft(value: unknown) {
   if (!value || typeof value !== "object") return value;
 
   const draft = value as Record<string, unknown>;
+  if (typeof draft.title === "string" && draft.title.trim() === "") {
+    draft.title = "How to complete the process";
+  }
+  if (typeof draft.overview === "string" && draft.overview.trim() === "") {
+    draft.overview = "No clear procedure steps were detected. Review the transcript and tangents.";
+  }
+
   for (const key of ["prerequisites", "warnings", "troubleshooting"]) {
     if (draft[key] === null) draft[key] = [];
   }
@@ -156,6 +311,24 @@ function normalizeModelDraft(value: unknown) {
     draft.steps = draft.steps.map((step) => (
       typeof step === "object" && step && "text" in step ? (step as { text: unknown }).text : step
     ));
+  }
+
+  return draft;
+}
+
+function normalizeNoProcedureModelDraft(value: unknown, fallback: HowToDraft) {
+  if (!value || typeof value !== "object") return value;
+
+  const draft = value as Record<string, unknown>;
+  if (typeof draft.title !== "string" || draft.title.trim() === "") {
+    draft.title = fallback.title;
+  }
+  if (typeof draft.overview !== "string" || draft.overview.trim() === "") {
+    draft.overview = fallback.overview;
+  }
+
+  for (const key of ["prerequisites", "steps", "warnings", "troubleshooting"]) {
+    if (!Array.isArray(draft[key])) draft[key] = [];
   }
 
   return draft;
@@ -217,13 +390,64 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
   async generate(focus: FocusReview): Promise<HowToDraft> {
     const fallback = createDeterministicDraft(focus);
     const prompt = [
-      "Rewrite these transcript segments into concise how-to notes.",
-      "Split run-on spoken instructions into separate ordered steps whenever the speaker says first, then, next, after that, or and then.",
-      "Rewrite, do not quote the transcript.",
-      "Preserve facts only. Do not invent missing steps.",
-      "Use complete, concise sentences for every step.",
-      "Keep tangents out of the main steps unless they are useful as warnings or troubleshooting.",
-      "Return only JSON with title, overview, prerequisites, steps, warnings, and troubleshooting.",
+      "You are converting a messy spoken transcript into a clear how-to document.",
+      [
+        "Your job:",
+        "- Extract only concrete procedural actions that the speaker actually describes.",
+        "- Rewrite those actions into clear, concise, complete sentences.",
+        "- Split run-on speech into separate steps when it contains multiple actions.",
+        "- Preserve the speaker's facts.",
+        "- Do not invent missing actions.",
+        "- Do not add generic advice.",
+        "- Do not write advice about how to create notes.",
+        "- Do not output steps like \"Identify the main objective,\" \"Organize the steps,\" \"Review the process,\" or \"Split the instruction.\"",
+        "- If the transcript does not contain a real procedure, return an empty steps array."
+      ].join("\n"),
+      [
+        "A valid step starts with a concrete action the user should perform.",
+        "A valid step describes something that can actually be done.",
+        "A valid step is grounded in the transcript.",
+        "A valid step is one complete sentence.",
+        "A valid step does not combine multiple actions unless they are inseparable."
+      ].join("\n"),
+      [
+        "Examples of valid steps:",
+        "- Open the Unraid dashboard.",
+        "- Go to Shares.",
+        "- Select the appdata share.",
+        "- Click Export.",
+        "- Save the file somewhere safe."
+      ].join("\n"),
+      [
+        "Examples of invalid steps:",
+        "- Identify the main objective.",
+        "- Break the transcript into steps.",
+        "- Organize the steps logically.",
+        "- Review and refine the instructions.",
+        "- Continue with step two.",
+        "- Go from there."
+      ].join("\n"),
+      [
+        "When splitting run-on speech:",
+        "- Split at words like first, then, next, after that, and then, and finally.",
+        "- Also split when two concrete actions are joined by and.",
+        "- Keep the original order unless the speaker explicitly corrects it.",
+        "- If the speaker says go back to step three, include that only if step three has a concrete action."
+      ].join("\n"),
+      [
+        "Output rules:",
+        "- Return only valid JSON.",
+        "- Do not wrap the JSON in markdown.",
+        "- Use exactly these fields: title, overview, prerequisites, steps, warnings, and troubleshooting."
+      ].join("\n"),
+      [
+        "Quality rules:",
+        "- If there are no concrete steps, steps must be [].",
+        "- If a sentence is vague planning chatter, exclude it.",
+        "- If a detail is useful context but not an action, put it in warnings or troubleshooting only if grounded.",
+        "- Keep every step short and direct."
+      ].join("\n"),
+      "Classified transcript segments:",
       JSON.stringify(focus)
     ].join("\n\n");
 
@@ -249,10 +473,24 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
     const data = (await response.json()) as { response?: string };
     try {
       const parsedDraft = parseOllamaDraftResponse(data.response ?? "{}");
-      const parsed = draftSchema.parse(parsedDraft);
-      const issue = modelDraftIssue(parsed, fallback);
+      const normalizedDraft = fallback.steps.length === 0
+        ? normalizeNoProcedureModelDraft(parsedDraft, fallback)
+        : parsedDraft;
+      const parsed = draftSchema.parse(normalizedDraft);
+      const sourceText = focus.procedure.map((segment) => segment.text).join(" ");
+      const issue = modelDraftIssue(parsed, fallback, sourceText);
       if (issue) return fallbackWithIssue(fallback, issue);
-      return { ...parsed, generationMode: "ollama" };
+      if (fallback.steps.length > 0 && parsed.steps.length > fallback.steps.length) {
+        const { steps, suggestions } = splitGroundedStepsAndSuggestions(parsed.steps, fallback.steps, sourceText);
+        return {
+          ...parsed,
+          steps,
+          suggestions,
+          generationMode: "ollama",
+          generationIssue: suggestions.length > 0 ? "Ollama suggested extra steps that need review." : undefined
+        };
+      }
+      return { ...parsed, suggestions: [], generationMode: "ollama" };
     } catch (error) {
       if (error instanceof Error && error.message === "Ollama response did not contain a JSON object.") {
         return fallbackWithIssue(fallback, error.message);

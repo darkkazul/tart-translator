@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ACCEPTED_AUDIO_FORMAT_LABEL, ACCEPTED_AUDIO_INPUT_ACCEPT, DEFAULT_FILLER_TERMS } from "../shared/defaults";
-import type { ProcessTranscriptResponse, RuntimeStatus, ServiceStatus } from "../shared/types";
+import type { DraftSuggestion, ProcessTranscriptResponse, RuntimeStatus, ServiceStatus } from "../shared/types";
 import { getRuntimeStatusRequest, streamAudioUploadRequest, streamProcessTranscriptRequest } from "./api";
 
 type Tab = "transcript" | "audio";
@@ -8,6 +8,9 @@ type ProgressState = {
   mode: Tab;
   stage: string;
   value: number;
+};
+type PromotedSuggestion = {
+  suggestion: DraftSuggestion;
 };
 
 export function App() {
@@ -21,6 +24,7 @@ export function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<ProgressState | null>(null);
+  const [promotedSuggestions, setPromotedSuggestions] = useState<PromotedSuggestion[]>([]);
 
   const parsedFillerTerms = useMemo(
     () => fillerTerms.split(",").map((term) => term.trim()).filter(Boolean),
@@ -64,11 +68,11 @@ export function App() {
         });
         setStatusMessage(upload.message);
         if (upload.transcript) setTranscript(upload.transcript);
-        if (upload.result) setResult(upload.result);
+        if (upload.result) applyResult(upload.result);
         return;
       }
 
-      setResult(await streamProcessTranscriptRequest(
+      applyResult(await streamProcessTranscriptRequest(
         { transcript, fillerTerms: parsedFillerTerms, mode: "how-to" },
         (event) => {
           setProgress({ mode: "transcript", stage: event.stage, value: event.progress });
@@ -80,6 +84,60 @@ export function App() {
       setIsProcessing(false);
       setProgress(null);
     }
+  }
+
+  function applyResult(nextResult: ProcessTranscriptResponse) {
+    setPromotedSuggestions([]);
+    setResult(nextResult);
+  }
+
+  function agreeWithSuggestion(suggestion: DraftSuggestion) {
+    setResult((current) => {
+      if (!current) return current;
+
+      const steps = [...current.draft.steps];
+      const insertIndex =
+        typeof suggestion.suggestedAfterStepIndex === "number"
+          ? Math.min(Math.max(suggestion.suggestedAfterStepIndex + 1, 0), steps.length)
+          : steps.length;
+
+      steps.splice(insertIndex, 0, suggestion.text);
+
+      return {
+        ...current,
+        draft: {
+          ...current.draft,
+          steps,
+          suggestions: current.draft.suggestions.filter((candidate) => candidate.id !== suggestion.id)
+        }
+      };
+    });
+    setPromotedSuggestions((current) => [...current, { suggestion }]);
+  }
+
+  function undoSuggestion(suggestion: DraftSuggestion) {
+    setResult((current) => {
+      if (!current) return current;
+
+      const restoredSuggestions = [...current.draft.suggestions, suggestion].sort((left, right) => {
+        const leftIndex = left.suggestedAfterStepIndex ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = right.suggestedAfterStepIndex ?? Number.MAX_SAFE_INTEGER;
+        return leftIndex - rightIndex || left.id.localeCompare(right.id);
+      });
+      const stepIndex = current.draft.steps.findIndex((step) => step === suggestion.text);
+
+      return {
+        ...current,
+        draft: {
+          ...current.draft,
+          steps: stepIndex >= 0
+            ? current.draft.steps.filter((_, index) => index !== stepIndex)
+            : current.draft.steps,
+          suggestions: restoredSuggestions
+        }
+      };
+    });
+    setPromotedSuggestions((current) => current.filter((item) => item.suggestion.id !== suggestion.id));
   }
 
   return (
@@ -159,7 +217,17 @@ export function App() {
                   </>
                 ) : null}
                 <h3>Steps</h3>
-                <ol>{result.draft.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                {result.draft.steps.length > 0 ? (
+                  <ol>{result.draft.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+                ) : (
+                  <p className="empty-state">No concrete procedure steps were detected in this transcript.</p>
+                )}
+                {result.draft.suggestions.length > 0 ? (
+                  <DraftSuggestions suggestions={result.draft.suggestions} onAgree={agreeWithSuggestion} />
+                ) : null}
+                {promotedSuggestions.length > 0 ? (
+                  <PromotedSuggestions suggestions={promotedSuggestions} onUndo={undoSuggestion} />
+                ) : null}
                 {result.draft.warnings.length > 0 || result.warnings.length > 0 ? (
                   <>
                     <h3>Warnings</h3>
@@ -212,6 +280,56 @@ export function App() {
         </section>
       </section>
     </main>
+  );
+}
+
+function DraftSuggestions({
+  suggestions,
+  onAgree
+}: {
+  suggestions: DraftSuggestion[];
+  onAgree: (suggestion: DraftSuggestion) => void;
+}) {
+  return (
+    <section className="suggestion-panel" aria-label="Suggestions">
+      <h3>Suggestions</h3>
+      <ul className="suggestion-list">
+        {suggestions.map((suggestion) => (
+          <li key={suggestion.id}>
+            <p>{suggestion.text}</p>
+            <small>{suggestion.reason}</small>
+            <button type="button" onClick={() => onAgree(suggestion)}>
+              Agree
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PromotedSuggestions({
+  suggestions,
+  onUndo
+}: {
+  suggestions: PromotedSuggestion[];
+  onUndo: (suggestion: DraftSuggestion) => void;
+}) {
+  return (
+    <section className="suggestion-panel accepted" aria-label="Added suggestions">
+      <h3>Added Suggestions</h3>
+      <ul className="suggestion-list">
+        {suggestions.map(({ suggestion }) => (
+          <li key={suggestion.id}>
+            <p>{suggestion.text}</p>
+            <small>Added to the process steps.</small>
+            <button type="button" onClick={() => onUndo(suggestion)}>
+              Undo
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
