@@ -47,7 +47,21 @@ describe("processTranscript", () => {
     ]);
   });
 
-  it("warns when an available provider falls back to deterministic generation", async () => {
+  it("parks vague placeholder step chatter instead of treating it as a procedure", async () => {
+    const result = await processTranscript(
+      {
+        transcript: "I'm just kind of talking to try to figure out if this thing or anything's working and all done remotely and then you know we might need to go through and do point step one and then afterwards I think we continue with step two and then I think we go from there and continue to do step four and then maybe we go back to three at some point."
+      },
+      [new DeterministicNoteProvider()]
+    );
+
+    expect(result.focus.procedure).toEqual([]);
+    expect(result.focus.tangents).toHaveLength(1);
+    expect(result.draft.steps).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("does not warn when the offline parser successfully rescues an Ollama issue", async () => {
     const result = await processTranscript(
       { transcript: "First open settings. Then click Save." },
       [
@@ -59,6 +73,32 @@ describe("processTranscript", () => {
             overview: "A concise procedure rewritten from the transcript.",
             prerequisites: [],
             steps: ["Open settings.", "Click Save."],
+            suggestions: [],
+            warnings: [],
+            troubleshooting: [],
+            generationMode: "deterministic",
+            generationIssue: "Ollama collapsed multiple parser steps into fewer steps."
+          })
+        }
+      ]
+    );
+
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns when an available provider falls back without usable deterministic steps", async () => {
+    const result = await processTranscript(
+      { transcript: "First open settings. Then click Save." },
+      [
+        {
+          name: "ollama",
+          isAvailable: async () => true,
+          generate: async () => ({
+            title: "How to complete the process",
+            overview: "No clear procedure steps were detected. Review the transcript and tangents.",
+            prerequisites: [],
+            steps: [],
+            suggestions: [],
             warnings: [],
             troubleshooting: [],
             generationMode: "deterministic",
@@ -71,6 +111,38 @@ describe("processTranscript", () => {
     expect(result.warnings).toContain(
       "Ollama was available, but the offline parser was used: Ollama response failed draft validation."
     );
+  });
+
+  it("warns when Ollama returns review suggestions", async () => {
+    const result = await processTranscript(
+      { transcript: "First open settings. Then click Save." },
+      [
+        {
+          name: "ollama",
+          isAvailable: async () => true,
+          generate: async () => ({
+            title: "How to complete the process",
+            overview: "A concise procedure rewritten from the transcript.",
+            prerequisites: [],
+            steps: ["Open settings.", "Click Save."],
+            suggestions: [
+              {
+                id: "ollama-extra-step-1",
+                text: "Confirm the changes.",
+                reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
+                suggestedAfterStepIndex: 1
+              }
+            ],
+            warnings: [],
+            troubleshooting: [],
+            generationMode: "ollama",
+            generationIssue: "Ollama suggested extra steps that need review."
+          })
+        }
+      ]
+    );
+
+    expect(result.warnings).toContain("Ollama suggested extra steps that need review.");
   });
 
   it("warns when Ollama is unavailable before using the offline parser", async () => {

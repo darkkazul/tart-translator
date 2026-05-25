@@ -13,6 +13,7 @@ const processResponse = {
     overview: "Configure backups clearly.",
     prerequisites: [],
     steps: ["Open the backup settings."],
+    suggestions: [],
     warnings: [],
     troubleshooting: [],
     generationMode: "deterministic"
@@ -122,4 +123,54 @@ test("shows progress while audio is transcribed", async ({ page }) => {
   finishUpload?.();
   await expect(progress).toBeHidden();
   await expect(page.getByText("Audio transcribed locally.")).toBeVisible();
+});
+
+test("lets users agree with suggested steps and undo them", async ({ page }) => {
+  await page.route("**/api/status", async (route) => {
+    await route.fulfill({ json: statusResponse });
+  });
+
+  await page.route("**/api/process-transcript/stream", async (route) => {
+    await route.fulfill({
+      contentType: "application/x-ndjson",
+      body: JSON.stringify({
+        type: "result",
+        result: {
+          ...processResponse,
+          draft: {
+            ...processResponse.draft,
+            title: "How to Save Settings",
+            steps: ["Open settings.", "Click Save."],
+            suggestions: [
+              {
+                id: "ollama-extra-step-1",
+                text: "Confirm the changes.",
+                reason: "Ollama suggested this extra step, but it was not found by the offline parser.",
+                suggestedAfterStepIndex: 1
+              }
+            ],
+            generationMode: "ollama",
+            generationIssue: "Ollama suggested extra steps that need review."
+          },
+          warnings: ["Ollama suggested extra steps that need review."]
+        }
+      })
+    });
+  });
+
+  await page.goto("/");
+  await page.getByLabel("Raw transcript").fill("First open settings. Then click Save.");
+  await page.getByRole("button", { name: "Generate notes" }).click();
+
+  await expect(page.getByRole("heading", { name: "Suggestions", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Agree" }).click();
+
+  await expect(page.getByRole("heading", { name: "Added Suggestions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Suggestions", exact: true })).toBeHidden();
+  await expect(page.getByRole("listitem").filter({ hasText: "Confirm the changes." }).first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+
+  await expect(page.getByRole("heading", { name: "Suggestions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Added Suggestions" })).toBeHidden();
 });

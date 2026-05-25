@@ -35,10 +35,18 @@ export interface HowToDraft {
   overview: string;
   prerequisites: string[];
   steps: string[];
+  suggestions: DraftSuggestion[];
   warnings: string[];
   troubleshooting: string[];
   generationMode: "deterministic" | "ollama";
   generationIssue?: string;
+}
+
+export interface DraftSuggestion {
+  id: string;
+  text: string;
+  reason: string;
+  suggestedAfterStepIndex?: number;
 }
 
 export interface FocusReview {
