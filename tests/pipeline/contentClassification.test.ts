@@ -98,4 +98,21 @@ describe("classifyTranscript", () => {
       "Wait for sync."
     ]);
   });
+
+  it("keeps an action clause that mentions a weak tangent word like 'old'", () => {
+    const focus = classifyTranscript("Add the user and remove the old account.");
+
+    expect(focus.procedure.map((segment) => segment.text)).toEqual([
+      "Add the user",
+      "remove the old account."
+    ]);
+    expect(focus.tangents).toEqual([]);
+  });
+
+  it("still parks a weak tangent word when the clause has no concrete action", () => {
+    const focus = classifyTranscript("This was historically a different layout.");
+
+    expect(focus.procedure).toEqual([]);
+    expect(focus.tangents.map((segment) => segment.text)).toEqual(["This was historically a different layout."]);
+  });
 });
