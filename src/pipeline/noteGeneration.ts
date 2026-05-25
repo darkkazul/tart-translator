@@ -122,6 +122,37 @@ function isUsefulModelDraft(draft: z.infer<typeof draftSchema>, fallback: HowToD
   return !draft.steps.some(isCollapsedTranscriptStep);
 }
 
+function parseOllamaDraftResponse(response: string) {
+  const jsonText = response.slice(response.indexOf("{"), response.lastIndexOf("}") + 1);
+  if (!jsonText) return {};
+
+  return normalizeModelDraft(
+    JSON.parse(
+    jsonText
+      .replace(/"prerequisites"\s*:\s*None/g, "\"prerequisites\": []")
+      .replace(/"warnings"\s*:\s*None/g, "\"warnings\": []")
+      .replace(/"troubleshooting"\s*:\s*None/g, "\"troubleshooting\": []")
+    )
+  );
+}
+
+function normalizeModelDraft(value: unknown) {
+  if (!value || typeof value !== "object") return value;
+
+  const draft = value as Record<string, unknown>;
+  for (const key of ["prerequisites", "warnings", "troubleshooting"]) {
+    if (draft[key] === null) draft[key] = [];
+  }
+
+  if (Array.isArray(draft.steps)) {
+    draft.steps = draft.steps.map((step) => (
+      typeof step === "object" && step && "text" in step ? (step as { text: unknown }).text : step
+    ));
+  }
+
+  return draft;
+}
+
 export class DeterministicNoteProvider implements NoteGenerationProvider {
   name = "deterministic" as const;
 
@@ -164,7 +195,7 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
     const response = await fetch(this.endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: process.env.OLLAMA_MODEL ?? "llama3.2", prompt, stream: false })
+      body: JSON.stringify({ model: process.env.OLLAMA_MODEL ?? "llama3.2", prompt, stream: false, format: "json" })
     });
 
     if (!response.ok) {
@@ -173,7 +204,7 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
 
     const data = (await response.json()) as { response?: string };
     try {
-      const parsed = draftSchema.parse(JSON.parse(data.response ?? "{}"));
+      const parsed = draftSchema.parse(parseOllamaDraftResponse(data.response ?? "{}"));
       if (!isUsefulModelDraft(parsed, fallback)) return fallback;
       return { ...parsed, generationMode: "ollama" };
     } catch {

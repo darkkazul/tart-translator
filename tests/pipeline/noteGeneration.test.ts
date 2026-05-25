@@ -116,6 +116,98 @@ describe("OllamaNoteProvider", () => {
     expect(draft.steps).toEqual(["Open the settings page.", "Click the blue Save button and wait for it to finish."]);
   });
 
+  it("requests Ollama JSON mode", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to save settings",
+          overview: "Use the settings page to save the change.",
+          prerequisites: [],
+          steps: ["Open the settings page.", "Click Save."],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OllamaNoteProvider().generate(messyFocus);
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ format: "json" });
+  });
+
+  it("accepts Ollama JSON wrapped in prose with None array fields", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: [
+          "Here is the rewritten version in JSON format:",
+          "",
+          "{",
+          "  \"title\": \"How to save settings\",",
+          "  \"overview\": \"Use the settings page to save the change.\",",
+          "  \"prerequisites\": None,",
+          "  \"steps\": [\"Open settings.\", \"Click Save.\"],",
+          "  \"warnings\": None,",
+          "  \"troubleshooting\": None",
+          "}"
+        ].join("\n")
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        { id: "1", text: "First open settings.", bucket: "procedure", confidence: 0.8, reason: "test" },
+        { id: "2", text: "Then click Save.", bucket: "procedure", confidence: 0.8, reason: "test" }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.prerequisites).toEqual([]);
+    expect(draft.steps).toEqual(["Open settings.", "Click Save."]);
+    expect(draft.warnings).toEqual([]);
+    expect(draft.troubleshooting).toEqual([]);
+  });
+
+  it("accepts Ollama step objects and null optional arrays", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: [
+          "Here is the rewritten JSON format:",
+          "",
+          "{",
+          "  \"title\": \"Concise How-To Notes\",",
+          "  \"overview\": \"Rewritten transcript segments into concise how-to notes.\",",
+          "  \"prerequisites\": null,",
+          "  \"steps\": [",
+          "    { \"id\": \"step-1\", \"text\": \"Open settings.\" },",
+          "    { \"id\": \"step-2\", \"text\": \"Click Save.\" }",
+          "  ],",
+          "  \"warnings\": [],",
+          "  \"troubleshooting\": []",
+          "}"
+        ].join("\n")
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        { id: "1", text: "First open settings.", bucket: "procedure", confidence: 0.8, reason: "test" },
+        { id: "2", text: "Then click Save.", bucket: "procedure", confidence: 0.8, reason: "test" }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("ollama");
+    expect(draft.prerequisites).toEqual([]);
+    expect(draft.steps).toEqual(["Open settings.", "Click Save."]);
+  });
+
   it("falls back when Ollama returns invalid JSON", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
