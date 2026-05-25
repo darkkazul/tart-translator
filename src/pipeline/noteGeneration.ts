@@ -62,6 +62,7 @@ function stripSpokenLeadIn(text: string) {
       .replace(/^(?:what\s+)?(?:i|we)\s+need\s+you\s+to\s+do\s+is\s+/i, "")
       .replace(/^(?:what\s+)?you\s+(?:need|want|wanna)\s+to\s+do\s+is\s+/i, "")
       .replace(/^you(?:'re| are)?\s+(?:gonna|going to|want to|wanna)\s+/i, "")
+      .replace(new RegExp(`^you(?:'ll| will)?\\s+(?=(?:${ACTION_STARTERS})\\b)`, "i"), "")
       .replace(/^(?:want|wanna)\s+to\s+/i, "")
       .replace(/^the\s+thing\s+you\s+do\s+is\s+/i, "")
       .replace(/^the\s+(?:process|thing)\s+is\s+/i, "")

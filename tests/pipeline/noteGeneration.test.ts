@@ -4,6 +4,7 @@ import {
   createDeterministicDraft,
   rewriteInstructionSentence
 } from "../../src/pipeline/noteGeneration";
+import { classifyTranscript } from "../../src/pipeline/contentClassification";
 import type { FocusReview } from "../../src/shared/types";
 
 const messyFocus: FocusReview = {
@@ -109,6 +110,27 @@ describe("createDeterministicDraft", () => {
     });
 
     expect(draft.steps).toEqual(["Go to settings.", "Click Save."]);
+  });
+
+  it("keeps the first step when the speaker says 'you' before the action", () => {
+    const draft = createDeterministicDraft({
+      procedure: [
+        { id: "1", text: "First you open the dashboard.", bucket: "procedure", confidence: 0.8, reason: "test" },
+        { id: "2", text: "Then click Save.", bucket: "procedure", confidence: 0.8, reason: "test" }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.steps).toEqual(["Open the dashboard.", "Click Save."]);
+  });
+
+  it("turns punctuation-free run-on speech into ordered process steps end to end", () => {
+    const draft = createDeterministicDraft(
+      classifyTranscript("first you open the dashboard then go to shares then click export")
+    );
+
+    expect(draft.steps).toEqual(["Open the dashboard.", "Go to shares.", "Click export."]);
   });
 
   it("does not turn vague planning chatter into a raw procedure step", () => {
