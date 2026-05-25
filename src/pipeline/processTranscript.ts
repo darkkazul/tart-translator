@@ -29,26 +29,31 @@ export async function processTranscript(
   const focus = classifyTranscript(transcript);
 
   onProgress?.("Choosing note engine", 58);
-  const provider = await firstAvailableProvider(providers);
+  const { provider, unavailableProviders } = await firstAvailableProvider(providers);
 
   onProgress?.("Generating notes", 76);
   const draft = await provider.generate(focus);
 
   onProgress?.("Finalizing notes", 94);
-  const warnings =
-    draft.generationMode === "deterministic"
-      ? ["Generated with deterministic cleanup because Ollama is unavailable or returned invalid output."]
-      : [];
+  const warnings: string[] = [];
+  if (draft.generationMode === "deterministic" && draft.generationIssue) {
+    warnings.push(`Ollama was available, but the offline parser was used: ${draft.generationIssue}`);
+  } else if (draft.generationMode === "deterministic" && unavailableProviders.includes("ollama")) {
+    warnings.push("Ollama was unavailable, so the offline parser was used.");
+  }
 
   return { draft, speech, focus, warnings };
 }
 
 async function firstAvailableProvider(providers: NoteGenerationProvider[]) {
+  const unavailableProviders: NoteGenerationProvider["name"][] = [];
+
   for (const provider of providers) {
     if (await provider.isAvailable()) {
-      return provider;
+      return { provider, unavailableProviders };
     }
+    unavailableProviders.push(provider.name);
   }
 
-  return new DeterministicNoteProvider();
+  return { provider: new DeterministicNoteProvider(), unavailableProviders };
 }

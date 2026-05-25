@@ -12,7 +12,7 @@ describe("processTranscript", () => {
     expect(result.focus.procedure).toHaveLength(2);
     expect(result.focus.tangents).toHaveLength(1);
     expect(result.draft.steps).toEqual(["Open the page.", "Click Save."]);
-    expect(result.warnings).toContain("Generated with deterministic cleanup because Ollama is unavailable or returned invalid output.");
+    expect(result.warnings).toEqual([]);
   });
 
   it("rejects very short transcripts", async () => {
@@ -61,12 +61,33 @@ describe("processTranscript", () => {
             steps: ["Open settings.", "Click Save."],
             warnings: [],
             troubleshooting: [],
-            generationMode: "deterministic"
+            generationMode: "deterministic",
+            generationIssue: "Ollama response failed draft validation."
           })
         }
       ]
     );
 
-    expect(result.warnings).toContain("Generated with deterministic cleanup because Ollama is unavailable or returned invalid output.");
+    expect(result.warnings).toContain(
+      "Ollama was available, but the offline parser was used: Ollama response failed draft validation."
+    );
+  });
+
+  it("warns when Ollama is unavailable before using the offline parser", async () => {
+    const result = await processTranscript(
+      { transcript: "First open settings. Then click Save." },
+      [
+        {
+          name: "ollama",
+          isAvailable: async () => false,
+          generate: async () => {
+            throw new Error("should not generate");
+          }
+        },
+        new DeterministicNoteProvider()
+      ]
+    );
+
+    expect(result.warnings).toContain("Ollama was unavailable, so the offline parser was used.");
   });
 });

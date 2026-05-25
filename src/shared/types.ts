@@ -38,6 +38,7 @@ export interface HowToDraft {
   warnings: string[];
   troubleshooting: string[];
   generationMode: "deterministic" | "ollama";
+  generationIssue?: string;
 }
 
 export interface FocusReview {

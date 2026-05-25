@@ -217,6 +217,7 @@ describe("OllamaNoteProvider", () => {
     const draft = await new OllamaNoteProvider().generate(messyFocus);
 
     expect(draft.generationMode).toBe("deterministic");
+    expect(draft.generationIssue).toBe("Ollama response did not contain a JSON object.");
     expect(draft.steps).toEqual(["Open the settings page.", "Click the blue Save button and wait for it to finish."]);
   });
 
@@ -238,6 +239,7 @@ describe("OllamaNoteProvider", () => {
     const draft = await new OllamaNoteProvider().generate(messyFocus);
 
     expect(draft.generationMode).toBe("deterministic");
+    expect(draft.generationIssue).toBe("Ollama returned a step that was not a complete sentence.");
     expect(draft.steps).toEqual(["Open the settings page.", "Click the blue Save button and wait for it to finish."]);
   });
 
@@ -273,6 +275,7 @@ describe("OllamaNoteProvider", () => {
     });
 
     expect(draft.generationMode).toBe("deterministic");
+    expect(draft.generationIssue).toBe("Ollama collapsed multiple parser steps into fewer steps.");
     expect(draft.steps).toEqual([
       "Open the Unraid dashboard.",
       "Go to shares.",
@@ -280,5 +283,38 @@ describe("OllamaNoteProvider", () => {
       "Click export.",
       "Save the file somewhere safe."
     ]);
+  });
+
+  it("falls back when Ollama adds unsupported extra steps", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        response: JSON.stringify({
+          title: "How to save settings",
+          overview: "Use the settings page to save changes.",
+          prerequisites: [],
+          steps: [
+            "Open settings.",
+            "Select your preferred language or region.",
+            "Click Save."
+          ],
+          warnings: [],
+          troubleshooting: []
+        })
+      })
+    }));
+
+    const draft = await new OllamaNoteProvider().generate({
+      procedure: [
+        { id: "1", text: "First open settings.", bucket: "procedure", confidence: 0.8, reason: "test" },
+        { id: "2", text: "Then click Save.", bucket: "procedure", confidence: 0.8, reason: "test" }
+      ],
+      tangents: [],
+      noise: []
+    });
+
+    expect(draft.generationMode).toBe("deterministic");
+    expect(draft.generationIssue).toBe("Ollama added extra steps not found by the parser.");
+    expect(draft.steps).toEqual(["Open settings.", "Click Save."]);
   });
 });

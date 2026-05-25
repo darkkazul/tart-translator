@@ -115,16 +115,24 @@ function isCollapsedTranscriptStep(step: string) {
   );
 }
 
-function isUsefulModelDraft(draft: z.infer<typeof draftSchema>, fallback: HowToDraft) {
-  const modelCollapsedActions = fallback.steps.length > 1 && draft.steps.length < fallback.steps.length;
-  if (modelCollapsedActions) return false;
+function modelDraftIssue(draft: z.infer<typeof draftSchema>, fallback: HowToDraft) {
+  if (fallback.steps.length > 0 && draft.steps.length > fallback.steps.length) {
+    return "Ollama added extra steps not found by the parser.";
+  }
 
-  return !draft.steps.some(isCollapsedTranscriptStep);
+  const modelCollapsedActions = fallback.steps.length > 1 && draft.steps.length < fallback.steps.length;
+  if (modelCollapsedActions) return "Ollama collapsed multiple parser steps into fewer steps.";
+
+  if (draft.steps.some(isCollapsedTranscriptStep)) {
+    return "Ollama returned a copied run-on transcript step.";
+  }
+
+  return null;
 }
 
 function parseOllamaDraftResponse(response: string) {
   const jsonText = response.slice(response.indexOf("{"), response.lastIndexOf("}") + 1);
-  if (!jsonText) return {};
+  if (!jsonText) throw new Error("Ollama response did not contain a JSON object.");
 
   return normalizeModelDraft(
     JSON.parse(
@@ -151,6 +159,33 @@ function normalizeModelDraft(value: unknown) {
   }
 
   return draft;
+}
+
+function fallbackWithIssue(fallback: HowToDraft, generationIssue: string): HowToDraft {
+  return { ...fallback, generationIssue };
+}
+
+function describeDraftValidationError(error: z.ZodError) {
+  const issue = error.issues[0];
+  const path = issue?.path.join(".");
+
+  if (path === "steps" && issue?.code === "too_small") {
+    return "Ollama did not return any procedure steps.";
+  }
+
+  if (path?.startsWith("steps.")) {
+    if (issue?.code === "invalid_string") {
+      return "Ollama returned a step that was not a complete sentence.";
+    }
+
+    return "Ollama returned steps in an unsupported shape.";
+  }
+
+  if (path && ["title", "overview", "prerequisites", "warnings", "troubleshooting"].includes(path)) {
+    return `Ollama response had an invalid ${path} field.`;
+  }
+
+  return "Ollama response failed draft validation.";
 }
 
 export class DeterministicNoteProvider implements NoteGenerationProvider {
@@ -199,16 +234,30 @@ export class OllamaNoteProvider implements NoteGenerationProvider {
     });
 
     if (!response.ok) {
-      return fallback;
+      return fallbackWithIssue(fallback, `Ollama request failed with HTTP ${response.status}.`);
     }
 
     const data = (await response.json()) as { response?: string };
     try {
-      const parsed = draftSchema.parse(parseOllamaDraftResponse(data.response ?? "{}"));
-      if (!isUsefulModelDraft(parsed, fallback)) return fallback;
+      const parsedDraft = parseOllamaDraftResponse(data.response ?? "{}");
+      const parsed = draftSchema.parse(parsedDraft);
+      const issue = modelDraftIssue(parsed, fallback);
+      if (issue) return fallbackWithIssue(fallback, issue);
       return { ...parsed, generationMode: "ollama" };
-    } catch {
-      return fallback;
+    } catch (error) {
+      if (error instanceof Error && error.message === "Ollama response did not contain a JSON object.") {
+        return fallbackWithIssue(fallback, error.message);
+      }
+
+      if (error instanceof SyntaxError) {
+        return fallbackWithIssue(fallback, "Ollama response contained malformed JSON.");
+      }
+
+      if (error instanceof z.ZodError) {
+        return fallbackWithIssue(fallback, describeDraftValidationError(error));
+      }
+
+      return fallbackWithIssue(fallback, "Ollama response could not be used.");
     }
   }
 }
